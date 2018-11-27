@@ -1,5 +1,6 @@
 import pygame
 import math
+import random
 from enum import Enum
 from pygame.math import Vector2 as Vec
 
@@ -13,23 +14,39 @@ default_size = 8
 bg_color = (76, 76, 76)
 edible_color = (255, 255, 255)
 clickable_color = (0, 0, 0)
+interactible_color = (180, 180, 180)
 missile_color = (120, 120, 120)
 missile_explosion_color = (200, 0, 0)
 player_color = (0,0,255)
 border_color = (0, 0, 0)
 
-friction = 0.1
+# Lower is less friction
+friction = 0.001
 
-default_player_mass = 15
+player_mass = 4
 
+# Missile Settings
 missile_radius = 4
 missile_prox = 50
 missile_explosion_radius = 15
 missile_max_speed = 45
 missile_homingness = 3
 
+# Interactible Settings
+interactible_mass = 6
+interactible_size = 14
+# Lower is less friction
+interactible_friction = 0.05
+interactible_pull = 2
+
 FPS = 60
 
+# Default settings
+player_pos = Vec(screen_width/2, screen_height/2)
+n_edibles = 5
+n_clickables = 6
+n_missiles = 8
+n_interactibles = 10
 
 def main():
     pygame.init()
@@ -40,23 +57,12 @@ def main():
     background.convert()
     running = True
 
-    entities = []
-    edibles = []
-    clickables = []
-
-    player = Player(entities, 300, 300)
-    e = Edible(entities, edibles, 100, 100)
-    c = Clickable(entities, clickables, 200, 200)
-    m = Missile(player, entities, 225, 200)
-    b1 = Border(entities, screen_width/2, border_width/2, screen_width, border_width)
-    b2 = Border(entities, border_width/2, screen_height/2, border_width, screen_height)
-    b3 = Border(entities, screen_width/2, screen_height-border_width/2, screen_width, border_width)
-    b4 = Border(entities, screen_width-border_width/2, screen_height/2, border_width, screen_height)
+    player, entities, edibles, clickables = reset(0)
 
     while running:
         # restart if the player has eaten everything
-        if len(edibles) == 0:
-            reset()
+        if len(edibles) == 0 or player.sfd:
+            player, entities, edibles, clickables = reset(player.score)
         time = clock.tick(FPS) # get the time passed since the last frame (in milliseconds)
         dt = time/1000
         # blit the background
@@ -70,10 +76,14 @@ def main():
                 for c in clickables:
                     if pos.distance_to(c.pos) < c.xsize + grace_distance:
                         player.target = c
-                        c.is_clicked = True
+                # The final clickable knows about the player
+                if player.target is not None:
+                    player.target.is_clicked = True
+                    player.target.target = player
             elif event.type == pygame.MOUSEBUTTONUP:
                 if player.target is not None:
                     player.target.is_clicked = False
+                    player.target.target = None
                     player.target = None
 
         for entity in entities:
@@ -106,6 +116,9 @@ def rect_overlap(r1, r2):
     else:
         return True
 
+def collide(e1, e2):
+    return rect_overlap(e1.get_bbox(), e2.get_bbox())
+
 def get_dist(e1, e2):
     return e1.pos.distance_to(e2.pos)
 
@@ -133,6 +146,7 @@ class Entity(object):
         entities.append(self)
         self._surface = None
         self.sfd = False
+        self.is_solid = False
 
     def update(self, time, entities):
         pass
@@ -149,13 +163,13 @@ class Border(Entity):
         super().__init__(entities, xpos, ypos, xsize, ysize)
         # drawing surface
         self._surface = mk_rect_surface(self.xsize, self.ysize, border_color)
+        self.is_solid = True
 
     def update(self, time, entities):
         for e in entities:
             # Kill killable entities that overlap
-            if hasattr(e, "die"):
-                if rect_overlap(self.get_bbox(), e.get_bbox()):
-                    e.die("Shattered to pieces against a wall")
+            if hasattr(e, "die") and collide(self, e):
+                e.die("Shattered to pieces against a wall")
 
     def draw(self, screen):
         super().draw(screen)
@@ -180,12 +194,14 @@ class Edible(Entity):
 
 class Clickable(Entity):
 
-    def __init__(self, entities, clickables, xpos, ypos):
-        super().__init__(entities, xpos, ypos)
+    def __init__(self, entities, clickables, xpos, ypos,
+            xsize=default_size, ysize=default_size, color=clickable_color):
+        super().__init__(entities, xpos, ypos, xsize, ysize)
+        self.target = None
         self.is_clicked = False
         clickables.append(self)
         # drawing surface
-        self._surface = mk_square_surface(self.xsize, clickable_color)
+        self._surface = mk_square_surface(self.xsize, color)
 
     def update(self, time, entities):
         pass
@@ -197,20 +213,24 @@ class Player(Entity):
 
     def __init__(self, entities, xpos, ypos):
         super().__init__(entities, xpos, ypos)
-        self.target = None
-        self.a = Vec(0, 0)
-        self.v = Vec(0, 0)
         self.score = 0
-        self.mass = default_player_mass
+        self.reset(Vec(xpos, ypos))
+        self.mass = player_mass
+        self.is_solid = True
         # drawing surface
         self._surface = mk_square_surface(self.xsize, player_color)
 
+    def reset(self, pos):
+        self.target = None
+        self.a = Vec(0,0)
+        self.v = Vec(0,0)
+        self.pos = pos 
+
     def die(self, msg):
         print(msg)
-        self.a = Vec(0, 0)
-        self.v = Vec(0, 0)
-        reset()
-        #TODO
+        self.reset(player_pos)
+        self.score = 0
+        self.sfd = True
 
     def update(self, time, entities):
         # Physics
@@ -220,16 +240,16 @@ class Player(Entity):
             to_target.scale_to_length(da)
             self.a += to_target
         else:
-            self.a -= self.a * friction
+            self.a = Vec(0,0)
+        self.v -=self.v * friction
         self.v += self.a
         self.pos += self.v * time
 
         # Eat entities
         for e in entities:
-            if hasattr(e, "eat"):
-                if rect_overlap(self.get_bbox(), e.get_bbox()):
-                    e.eat()
-                    self.score += 1
+            if hasattr(e, "eat") and collide(self, e):
+                e.eat()
+                self.score += 1
 
     #TODO: player shadows
     def draw(self, screen):
@@ -243,12 +263,30 @@ class MissileState(Enum):
     TARGETING = 2
     EXPLODING = 3
 
+def mk_wait_surface(xsize, ysize, center):
+    surface = pygame.Surface((xsize, ysize), pygame.SRCALPHA, 32)
+    pygame.draw.circle(surface, missile_color, center, missile_radius)
+    pygame.draw.circle(surface, missile_color, center, missile_prox, 1)
+    surface.convert_alpha()
+    return surface
+
+def mk_target_surface(xsize, ysize, center):
+    #TODO: this is lazy blitting
+    surface = pygame.Surface((xsize, ysize), pygame.SRCALPHA, 32)
+    pygame.draw.circle(surface, missile_color, center, missile_radius)
+    surface.convert_alpha()
+    return surface
+
+def mk_exploding_surface(xsize, ysize, center):
+    surface = pygame.Surface((xsize, ysize), pygame.SRCALPHA, 32)
+    pygame.draw.circle(surface, missile_explosion_color, center, missile_explosion_radius)
+    surface.convert_alpha()
+    return surface
+
 class Missile(Entity):
     
     def __init__(self, player, entities, xpos, ypos):
         super().__init__(entities, xpos, ypos, 2*missile_prox, 2*missile_prox)
-        self.mode = MissileState.WAITING
-        self.mode_counter = 0
         self.target = player
         self.a = Vec(0, 0)
         self.v = Vec(0, 0)
@@ -256,41 +294,59 @@ class Missile(Entity):
         self.explosion_radius = missile_explosion_radius
         self.max_speed = missile_max_speed
         self.sfd = False
-        # Drawing surface
-        self._surface = pygame.Surface((self.xsize, self.ysize), pygame.SRCALPHA, 32)
-        pygame.draw.circle(self._surface, missile_color, self.center, missile_radius)
-        pygame.draw.circle(self._surface, missile_color, self.center, missile_prox, 1)
-        self._surface.convert_alpha()
+        # Drawing surface and state counter
+        self.set_state(MissileState.WAITING)
 
     def get_bbox(self):
         return (self.pos - (missile_radius, missile_radius), self.pos + (missile_radius, missile_radius))
 
+    def set_state(self, state):
+        if state == MissileState.WAITING:
+            self.a = Vec(0,0)
+            self.v = Vec(0,0)
+            self._surface = mk_wait_surface(self.xsize, self.ysize, self.center)
+        elif state == MissileState.TARGETING:
+            self.a = Vec(0,0)
+            self.v = Vec(0,0)
+            self._surface = mk_target_surface(self.xsize, self.ysize, self.center)
+        elif state == MissileState.EXPLODING:
+            self.a = Vec(0,0)
+            self.v = Vec(0,0)
+            self._surface = mk_exploding_surface(self.xsize, self.ysize, self.center)
+        self.state_counter = 0
+        self.state = state
+
     def update(self, time, entities):
-        if (self.mode == MissileState.WAITING):
+        if (self.state == MissileState.WAITING):
             # Trigger if the player is close
             if get_dist(self, self.target) < self.prox:
-                self.mode = MissileState.TARGETING
+                self.set_state(MissileState.TARGETING)
             # Trigger if the player clicks on something close
             elif self.target.target is not None:
                 if get_dist(self, self.target.target) < self.prox:
-                    self.mode = MissileState.TARGETING
-                    #TODO: change surface to only the circle
-        elif (self.mode == MissileState.TARGETING):
-            # TODO: collision with interactibles
-            # TODO: collision with player
+                    self.set_state(MissileState.TARGETING)
+        elif (self.state == MissileState.TARGETING):
+            # Collision with solids
+            for e in entities:
+                if e.is_solid and collide(self, e):
+                    self.die("")
+            # Explode near the player
+            if vec_from(self, self.target).length() < missile_explosion_radius:
+                self.die("")
             # Accelerate towards the player
             da = vec_from(self, self.target)
             da += self.target.v * time
             da = da.normalize()
             da *= missile_homingness
             self.a = da
-        elif (self.mode == MissileState.EXPLODING):
+        elif (self.state == MissileState.EXPLODING):
             # TODO: lower velocity
-            self.mode_counter += 1
+            self.state_counter += 1
             # 10 frames of missile explosion
             # TODO: time-based?
-            if self.mode_counter == 10:
+            if self.state_counter == 10:
                 self.sfd = True
+            # Kill player if they are close
             if get_dist(self, self.target) < missile_explosion_radius:
                 self.target.die("Blown up by a missile.")
 
@@ -301,12 +357,110 @@ class Missile(Entity):
         self.pos += self.v * time
 
     def draw(self, screen):
-        if self.target is not None and self.mode == MissileState.TARGETING:
+        if self.target is not None and self.state == MissileState.TARGETING:
             draw_line(screen, self.pos, self.target.pos, missile_explosion_color)
         super().draw(screen)
 
     def die(self, msg):
-        pass
+        self.set_state(MissileState.EXPLODING)
+
+def get_collision_vectors(e1, e2):
+    u = vec_from(e2, e1).normalize()
+    vu1 = e1.v.dot(u)
+    vu2 = e2.v.dot(u)
+    wu1 = (e1.mass * vu1 + e2.mass * (2*vu2 - vu1))/(e1.mass + e2.mass)
+    wu2 = (e2.mass * vu2 + e1.mass * (2*vu1 - vu2))/(e1.mass + e2.mass)
+    w1 = e1.v + (u * (wu1 - vu1))
+    w2 = e2.v + (u * (wu2 - vu2))
+    return w1, w2
+
+class Interactible(Clickable):
+
+    def __init__(self, player, entities, clickables, xpos, ypos):
+        super().__init__(entities, clickables, xpos, ypos,
+                interactible_size, interactible_size, interactible_color)
+        self.v = Vec(0,0)
+        self.a = Vec(0,0)
+        self.mass = interactible_mass
+        self.is_solid = True
+
+    def update(self, time, entities):
+        # Check for collisions
+        for e in entities:
+            if e.is_solid and self.pos != e.pos and collide(self, e):
+                # Bounce off of other things
+                if hasattr(e, "v"):
+                    v1, v2 = get_collision_vectors(self, e)
+                    self.v = v1
+                    e.v = v2
+                # Bounce elastically off of other solids
+                else:
+                    self.v = -1 * self.v
+        # Player pulls this
+        if self.target is not None:
+            pvec = vec_from(self, self.target)
+            pvec = pvec.normalize() * interactible_pull
+            self.a = pvec
+        else:
+            self.a = Vec(0,0)
+        # Friction
+        self.v -= self.v * interactible_friction
+
+        # Physics
+        self.v += self.a
+        self.pos += self.v * time
+
+    def draw(self,screen):
+        super().draw(screen)
+
+def random_pos():
+    bw = border_width * 1.5
+    p1 = random.uniform(bw, screen_width - bw)
+    p2 = random.uniform(bw, screen_height - bw)
+    return Vec(p1, p2)
+
+def reset(score):
+    # Clear the lists
+    entities = []
+    edibles = []
+    clickables = []
+    # Create the player
+    player = Player(entities, player_pos[0], player_pos[1])
+    player.score = score
+
+    # Borders
+    b1 = Border(entities, screen_width/2, border_width/2, screen_width, border_width)
+    b2 = Border(entities, border_width/2, screen_height/2, border_width, screen_height)
+    b3 = Border(entities, screen_width/2, screen_height-border_width/2, screen_width, border_width)
+    b4 = Border(entities, screen_width-border_width/2, screen_height/2, border_width, screen_height)
+
+    # Generate clickables
+    for i in range(n_clickables):
+        p = random_pos()
+        c = Clickable(entities, clickables, p[0], p[1])
+    # Generate edibles
+    for j in range(n_edibles):
+        p = random_pos()
+        e = Edible(entities, edibles, p[0], p[1])
+    # Generate missiles
+    nm = 0
+    while nm < n_missiles:
+        p = random_pos()
+        # Only place if not too close to the player
+        if (p - player.pos).length() > missile_prox:
+            m = Missile(player, entities, p[0], p[1])
+            nm += 1
+    # Generate interactibles
+    ni = 0
+    while ni < n_interactibles:
+        p = random_pos()
+        if (p - player.pos).length() > interactible_size:
+            i = Interactible(player, entities, clickables, p[0], p[1])
+            ni += 1
+
+    return player, entities, edibles, clickables
+
+    
 
 if __name__=="__main__":
     main()
