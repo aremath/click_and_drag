@@ -91,6 +91,8 @@ def main():
 
         # Kill all entities scheduled for destruction
         entities = [e for e in entities if not e.sfd]
+        edibles = [e for e in edibles if not e.sfd]
+        clickables = [e for e in clickables if not e.sfd]
 
         for entity in entities:
             entity.draw(screen)
