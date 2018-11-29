@@ -8,22 +8,24 @@ screen_width = 720
 screen_height = 720
 border_width = 20
 
-grace_distance = 4
-default_size = 8
+grace_distance = 5
+default_size = 12
 
-bg_color = (76, 76, 76)
+bg_color = (80, 80, 80)
 edible_color = (255, 255, 255)
-clickable_color = (0, 0, 0)
-interactible_color = (180, 180, 180)
+clickable_color = (200, 0, 0)
+interactible_color = (200, 100, 0)
 missile_color = (120, 120, 120)
 missile_explosion_color = (200, 0, 0)
-player_color = (0,0,255)
+player_color = (0,25,255)
 border_color = (0, 0, 0)
+gravitywell_color = (0,200,200)
 
+# Player Settings
 # Lower is less friction
 friction = 0.001
-
 player_mass = 4
+player_pull = 6
 
 # Missile Settings
 missile_radius = 4
@@ -39,6 +41,13 @@ interactible_size = 14
 interactible_friction = 0.05
 interactible_pull = 2
 
+# Gravitywell Settings
+gravitywell_mass = 10
+gravitation = 300
+
+# Obstacle Settings
+obstacle_width = 35
+
 FPS = 60
 
 # Default settings
@@ -47,6 +56,8 @@ n_edibles = 5
 n_clickables = 6
 n_missiles = 8
 n_interactibles = 10
+n_gravitywells = 0
+n_borders = 5
 
 def main():
     pygame.init()
@@ -129,6 +140,20 @@ def vec_from(e1, e2):
 
 def unit_vec_from(e1, e2):
     return vec_from(e1, e2).normalize()
+
+def wrap_val(x, max_x):
+    if x < 0:
+        return max_x + x
+    elif x > max_x:
+        return x - max_x
+    else:
+        return x
+
+def wrap_around(p):
+    new_p = Vec(0,0)
+    new_p[0] = wrap_val(p[0], screen_width)
+    new_p[1] = wrap_val(p[1], screen_height)
+    return new_p
 
 def draw_line(screen, p1, p2, color):
     # TODO: this is lazy blitting
@@ -237,15 +262,16 @@ class Player(Entity):
     def update(self, time, entities):
         # Physics
         if self.target is not None:
-            to_target = vec_from(self, self.target)
-            da = math.exp(-1/(to_target.length()))
-            to_target.scale_to_length(da)
-            self.a += to_target
+            to_target = vec_from(self, self.target).normalize()
+            #da = math.exp(-1/(to_target.length()))
+            #to_target.scale_to_length(da)
+            self.a = player_pull * to_target
         else:
             self.a = Vec(0,0)
         self.v -=self.v * friction
         self.v += self.a
         self.pos += self.v * time
+        self.pos = wrap_around(self.pos)
 
         # Eat entities
         for e in entities:
@@ -293,6 +319,7 @@ class Missile(Entity):
         self.a = Vec(0, 0)
         self.v = Vec(0, 0)
         self.prox = missile_prox
+        self.state_counter = 0
         self.explosion_radius = missile_explosion_radius
         self.max_speed = missile_max_speed
         self.sfd = False
@@ -315,7 +342,6 @@ class Missile(Entity):
             self.a = Vec(0,0)
             self.v = Vec(0,0)
             self._surface = mk_exploding_surface(self.xsize, self.ysize, self.center)
-        self.state_counter = 0
         self.state = state
 
     def update(self, time, entities):
@@ -333,7 +359,7 @@ class Missile(Entity):
                 if e.is_solid and collide(self, e):
                     self.die("")
             # Explode near the player
-            if vec_from(self, self.target).length() < missile_explosion_radius:
+            if vec_from(self, self.target).length() < missile_explosion_radius + self.target.xsize/2:
                 self.die("")
             # Accelerate towards the player
             da = vec_from(self, self.target)
@@ -349,14 +375,14 @@ class Missile(Entity):
             if self.state_counter == 10:
                 self.sfd = True
             # Kill player if they are close
-            if get_dist(self, self.target) < missile_explosion_radius:
+            if get_dist(self, self.target) < missile_explosion_radius + self.target.xsize:
                 self.target.die("Blown up by a missile.")
-
         # Physics
         self.v += self.a
         if self.v.length() > missile_max_speed:
             self.v.scale_to_length(missile_max_speed)
         self.pos += self.v * time
+        self.pos = wrap_around(self.pos)
 
     def draw(self, screen):
         if self.target is not None and self.state == MissileState.TARGETING:
@@ -411,8 +437,29 @@ class Interactible(Clickable):
         # Physics
         self.v += self.a
         self.pos += self.v * time
+        self.pos = wrap_around(self.pos)
 
     def draw(self,screen):
+        super().draw(screen)
+
+class GravityWell(Entity):
+
+    def __init__(self, player, entities, xpos, ypos):
+        super().__init__(entities, xpos, ypos)
+        self.target = player
+        self.mass = gravitywell_mass
+        # Surface:
+        self._surface = mk_square_surface(self.xsize, gravitywell_color)
+
+    def update(self, time, entities):
+        # pull the player towards it with gravitational force
+        p_vec = vec_from(self.target, self)
+        p_len = p_vec.length()
+        p_force = gravitation * (self.mass * self.target.mass / (p_len * p_len))
+        p_a = p_force / self.target.mass
+        self.target.v += p_a * p_vec * time
+
+    def draw(self, screen):
         super().draw(screen)
 
 def random_pos():
@@ -431,19 +478,31 @@ def reset(score):
     player.score = score
 
     # Borders
-    b1 = Border(entities, screen_width/2, border_width/2, screen_width, border_width)
-    b2 = Border(entities, border_width/2, screen_height/2, border_width, screen_height)
-    b3 = Border(entities, screen_width/2, screen_height-border_width/2, screen_width, border_width)
-    b4 = Border(entities, screen_width-border_width/2, screen_height/2, border_width, screen_height)
+    #b1 = Border(entities, screen_width/2, border_width/2, screen_width, border_width)
+    #b2 = Border(entities, border_width/2, screen_height/2, border_width, screen_height)
+    #b3 = Border(entities, screen_width/2, screen_height-border_width/2, screen_width, border_width)
+    #b4 = Border(entities, screen_width-border_width/2, screen_height/2, border_width, screen_height)
 
+    # Generate borders
+    nb = 0
+    while nb < n_borders:
+        p = random_pos()
+        if (p - player.pos).length() > 2 * obstacle_width:
+            b = Border(entities, p[0], p[1], obstacle_width, obstacle_width)
+            nb += 1
     # Generate clickables
     for i in range(n_clickables):
         p = random_pos()
         c = Clickable(entities, clickables, p[0], p[1])
+    #TODO: edibles not inside borders!
     # Generate edibles
     for j in range(n_edibles):
         p = random_pos()
         e = Edible(entities, edibles, p[0], p[1])
+    # Generate gravitywells
+    for g in range(n_gravitywells):
+        p = random_pos()
+        g = GravityWell(player, entities, p[0], p[1])
     # Generate missiles
     nm = 0
     while nm < n_missiles:
@@ -462,8 +521,7 @@ def reset(score):
 
     return player, entities, edibles, clickables
 
-    
-
+# Executable
 if __name__=="__main__":
     main()
 
