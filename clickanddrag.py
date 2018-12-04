@@ -52,12 +52,17 @@ FPS = 60
 
 # Default settings
 player_pos = Vec(screen_width/2, screen_height/2)
-n_edibles = 5
-n_clickables = 6
-n_missiles = 8
-n_interactibles = 10
-n_gravitywells = 0
-n_borders = 5
+n_edibles =         [5, 6, 7, 8]
+n_clickables =      [6, 6, 5, 5]
+n_missiles =        [8, 8, 9, 9]
+n_interactibles =   [10, 10, 9, 9]
+n_gravitywells =    [0, 0, 2, 3]
+n_borders =         [5, 6, 8, 9]
+missile_maxspeeds = [45, 50, 55, 55]
+max_difficulty = 3
+
+def calc_difficulty(score):
+    return min(score//7, max_difficulty)
 
 def main():
     pygame.init()
@@ -67,13 +72,14 @@ def main():
     background.fill(bg_color)
     background.convert()
     running = True
+    difficulty = 0
 
-    player, entities, edibles, clickables = reset(0)
+    player, entities, edibles, clickables = reset(0, difficulty)
 
     while running:
         # restart if the player has eaten everything
         if len(edibles) == 0 or player.sfd:
-            player, entities, edibles, clickables = reset(player.score)
+            player, entities, edibles, clickables = reset(player.score, calc_difficulty(player.score))
         time = clock.tick(FPS) # get the time passed since the last frame (in milliseconds)
         dt = time/1000
         # blit the background
@@ -161,6 +167,11 @@ def draw_line(screen, p1, p2, color):
     pygame.draw.line(lsurface, color, p1, p2)
     lsurface.convert_alpha()
     screen.blit(lsurface, (0,0))
+
+def draw_text(screen, p, text, color):
+    f = pygame.font.SysFont("notomono", 30)
+    tsurface = f.render(text, False, color)
+    screen.blit(tsurface, p)
 
 class Entity(object):
     
@@ -284,6 +295,7 @@ class Player(Entity):
         # Draw the line between here and the target
         if self.target is not None:
             draw_line(screen, self.pos, self.target.pos, (0,0,0))
+        draw_text(screen, Vec(0,0), "Score: {}".format(self.score), (0,0,0))
         super().draw(screen)
 
 class MissileState(Enum):
@@ -468,7 +480,16 @@ def random_pos():
     p2 = random.uniform(bw, screen_height - bw)
     return Vec(p1, p2)
 
-def reset(score):
+def dist_ok(p, e_list, threshold):
+    for e in e_list:
+        if (p - e.pos).length() <= threshold:
+            return False
+    return True
+
+def dist_ok_solid(p, e_list, threshold):
+    return dist_ok(p, [e for e in e_list if e.is_solid], threshold)
+
+def reset(score, difficulty):
     # Clear the lists
     entities = []
     edibles = []
@@ -476,6 +497,7 @@ def reset(score):
     # Create the player
     player = Player(entities, player_pos[0], player_pos[1])
     player.score = score
+    missile_max_speed = missile_maxspeeds[difficulty]
 
     # Borders
     #b1 = Border(entities, screen_width/2, border_width/2, screen_width, border_width)
@@ -485,35 +507,40 @@ def reset(score):
 
     # Generate borders
     nb = 0
-    while nb < n_borders:
+    while nb < n_borders[difficulty]:
         p = random_pos()
-        if (p - player.pos).length() > 2 * obstacle_width:
+        if dist_ok(p, entities, 2 * obstacle_width):
             b = Border(entities, p[0], p[1], obstacle_width, obstacle_width)
             nb += 1
     # Generate clickables
-    for i in range(n_clickables):
+    nc = 0
+    while nc < n_clickables[difficulty]:
         p = random_pos()
-        c = Clickable(entities, clickables, p[0], p[1])
-    #TODO: edibles not inside borders!
+        if dist_ok_solid(p, entities, obstacle_width):
+            c = Clickable(entities, clickables, p[0], p[1])
+        nc += 1
     # Generate edibles
-    for j in range(n_edibles):
+    ne = 0
+    while ne < n_edibles[difficulty]:
         p = random_pos()
-        e = Edible(entities, edibles, p[0], p[1])
+        if dist_ok_solid(p, entities, obstacle_width):
+            e = Edible(entities, edibles, p[0], p[1])
+        ne += 1
     # Generate gravitywells
-    for g in range(n_gravitywells):
+    for g in range(n_gravitywells[difficulty]):
         p = random_pos()
         g = GravityWell(player, entities, p[0], p[1])
     # Generate missiles
     nm = 0
-    while nm < n_missiles:
+    while nm < n_missiles[difficulty]:
         p = random_pos()
         # Only place if not too close to the player
-        if (p - player.pos).length() > missile_prox:
+        if (p - player.pos).length() > missile_prox and dist_ok_solid(p, entities, obstacle_width):
             m = Missile(player, entities, p[0], p[1])
             nm += 1
     # Generate interactibles
     ni = 0
-    while ni < n_interactibles:
+    while ni < n_interactibles[difficulty]:
         p = random_pos()
         if (p - player.pos).length() > interactible_size:
             i = Interactible(player, entities, clickables, p[0], p[1])
