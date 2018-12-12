@@ -11,15 +11,15 @@ border_width = 20
 grace_distance = 5
 default_size = 12
 
-bg_color = (80, 80, 80)
+bg_color = (90, 98, 98)
 edible_color = (255, 255, 255)
-clickable_color = (200, 0, 0)
-interactible_color = (200, 100, 0)
+clickable_color = (0, 200, 100)
+interactible_color = (0, 200, 200)
 missile_color = (120, 120, 120)
 missile_explosion_color = (200, 0, 0)
-player_color = (0,25,255)
+player_color = (50,50,255)
 border_color = (0, 0, 0)
-gravitywell_color = (0,200,200)
+gravitywell_color = (200,0,200)
 
 # Player Settings
 # Lower is less friction
@@ -52,17 +52,17 @@ FPS = 60
 
 # Default settings
 player_pos = Vec(screen_width/2, screen_height/2)
-n_edibles =         [5, 6, 7, 8]
-n_clickables =      [6, 6, 5, 5]
-n_missiles =        [8, 8, 9, 9]
-n_interactibles =   [10, 10, 9, 9]
-n_gravitywells =    [0, 0, 2, 3]
-n_borders =         [5, 6, 8, 9]
-missile_maxspeeds = [45, 50, 55, 55]
-max_difficulty = 3
+n_edibles =         [5, 5, 5, 5, 5, 6, 7, 8]
+n_clickables =      [7, 7, 6, 6, 6, 6, 6, 6]
+n_missiles =        [0, 0, 2, 4, 8, 8, 9, 9]
+n_interactibles =   [0, 4, 4, 6, 10, 10, 9, 9]
+n_gravitywells =    [0, 0, 0, 0, 0, 0, 2, 3]
+n_borders =         [0, 0, 0, 2, 5, 6, 8, 9]
+missile_maxspeeds = [45, 45, 45, 45, 45, 50, 55, 55]
+max_difficulty = 7
 
 def calc_difficulty(score):
-    return min(score//7, max_difficulty)
+    return min(score//5, max_difficulty)
 
 def main():
     pygame.init()
@@ -72,14 +72,18 @@ def main():
     background.fill(bg_color)
     background.convert()
     running = True
-    difficulty = 0
+    stage = 6
 
-    player, entities, edibles, clickables = reset(0, difficulty)
+    player, entities, edibles, clickables = reset(0, stage)
 
     while running:
         # restart if the player has eaten everything
         if len(edibles) == 0 or player.sfd:
-            player, entities, edibles, clickables = reset(player.score, calc_difficulty(player.score))
+            if not player.sfd:
+                stage += 1
+                if stage > max_difficulty:
+                    stage = max_difficulty
+            player, entities, edibles, clickables = reset(player.score, stage)
         time = clock.tick(FPS) # get the time passed since the last frame (in milliseconds)
         dt = time/1000
         # blit the background
@@ -195,6 +199,24 @@ class Entity(object):
     def get_bbox(self):
         return (self.pos - self.size_v, self.pos + self.size_v)
 
+class FadeText(Entity):
+
+    def __init__(self, entities, xpos, ypos, text, nframes, color):
+        super().__init__(entities, xpos, ypos)
+        self.text = text
+        self.frame_count = 0
+        self.nframes = nframes
+        self.color = color
+
+    def update(self, time, entities):
+        if self.frame_count > nframes:
+            self.sfd = True
+        self.frame_count += 1
+
+    def draw(self, screen):
+        draw_text(screen, self.pos, text, color)
+
+
 class Border(Entity):
     
     def __init__(self, entities, xpos, ypos, xsize, ysize):
@@ -224,7 +246,6 @@ class Edible(Entity):
         pass
 
     def eat(self):
-        print("EAT")
         self.sfd = True
 
     def draw(self, screen):
@@ -249,12 +270,13 @@ class Clickable(Entity):
 
 class Player(Entity):
 
-    def __init__(self, entities, xpos, ypos):
+    def __init__(self, entities, xpos, ypos, difficulty):
         super().__init__(entities, xpos, ypos)
         self.score = 0
         self.reset(Vec(xpos, ypos))
         self.mass = player_mass
         self.is_solid = True
+        self.difficulty = difficulty
         # drawing surface
         self._surface = mk_square_surface(self.xsize, player_color)
 
@@ -289,6 +311,11 @@ class Player(Entity):
             if hasattr(e, "eat") and collide(self, e):
                 e.eat()
                 self.score += 1
+
+        # Update difficulty
+        c = calc_difficulty(self.score)
+        if c > self.difficulty:
+            self.difficulty = c
 
     #TODO: player shadows
     def draw(self, screen):
@@ -495,7 +522,7 @@ def reset(score, difficulty):
     edibles = []
     clickables = []
     # Create the player
-    player = Player(entities, player_pos[0], player_pos[1])
+    player = Player(entities, player_pos[0], player_pos[1], difficulty)
     player.score = score
     missile_max_speed = missile_maxspeeds[difficulty]
 
